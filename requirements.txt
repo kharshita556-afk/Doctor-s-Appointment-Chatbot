@@ -1,6 +1,7 @@
 streamlit
 pandas
 kagglehub
+kagglesdk==0.1.31
 streamlit-mic-recorder
 gTTS
 supabase
