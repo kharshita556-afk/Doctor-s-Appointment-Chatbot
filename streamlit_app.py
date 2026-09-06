@@ -18,15 +18,36 @@ from streamlit_mic_recorder import mic_recorder
 from gtts import gTTS
 import base64
 
+DEFAULT_DOCTORS = {
+    "Primary Care Doctor": ["Dr. Rajesh Sharma", "Dr. Anita Desai", "Dr. Amit Patel"],
+    "Cardiologist": ["Dr. Suresh Raina", "Dr. Meena Gupta", "Dr. Vikram Seth"],
+    "Dermatologist": ["Dr. Priya Nair", "Dr. Kunal Kapoor", "Dr. Pooja Joshi"],
+    "Neurologist": ["Dr. Arun Kumar", "Dr. Sunita Rao", "Dr. Deepak Verma"],
+    "Orthopedic Surgeon": ["Dr. Alok Mishra", "Dr. Ritu Choudhary", "Dr. Sanjay Dutt"],
+    "Pediatrician": ["Dr. Neha Bansal", "Dr. Rahul Malhotra", "Dr. Simran Kaur"],
+    "Psychiatrist": ["Dr. Manisha Roy", "Dr. Rohit Agarwal", "Dr. Tanvi Shah"],
+    "Ear, Nose & Throat Doctor": ["Dr. Vivek Reddy", "Dr. Swati Sen", "Dr. Gautam Das"],
+    "Ophthalmologist": ["Dr. Arvind Swamy", "Dr. Pallavi Kulkarni", "Dr. Tarun Jain"],
+    "Dentist": ["Dr. Ananya Pandey", "Dr. Harshvardhan Goel", "Dr. Divya Iyer"],
+    "Gastroenterologist": ["Dr. Pradeep Bhat", "Dr. Smita Tiwari", "Dr. Mohit Saxena"],
+    "Pulmonologist": ["Dr. Sandeep Mukherjee", "Dr. Shweta Singh", "Dr. Farhan Akhtar"],
+    "Urologist": ["Dr. Harish Chandra", "Dr. Radhika Menon", "Dr. Nikhil Pillai"]
+}
+
 @st.cache_resource
 def load_doctor_data():
-    path = kagglehub.dataset_download("niksaurabh/doctors-speciality")
-    csv_files = [file for file in os.listdir(path) if file.endswith('.csv')]
-    if csv_files:
-        file_path = os.path.join(path, csv_files[0])
-        df = pd.read_csv(file_path)
-        return df.groupby('speciality')['Doctor\'s Name'].apply(list).to_dict()
-    return {}
+    try:
+        path = kagglehub.dataset_download("niksaurabh/doctors-speciality")
+        csv_files = [file for file in os.listdir(path) if file.endswith('.csv')]
+        if csv_files:
+            file_path = os.path.join(path, csv_files[0])
+            df = pd.read_csv(file_path)
+            data = df.groupby('speciality')['Doctor\'s Name'].apply(list).to_dict()
+            if data:
+                return data
+    except Exception as e:
+        print(f"Notice: Using default doctor directory (KaggleHub note: {e})")
+    return DEFAULT_DOCTORS
 
 doctors_by_specialty = load_doctor_data()
 
@@ -134,7 +155,9 @@ def ask_step_question(step):
         "symptoms": "What symptoms are you having?",
         "appointment_date": "When would you like to visit?",
         "appointment_time": "What time?",
-        "confirm_appointment": "Ready to book?"
+        "confirm_appointment": "Ready to book?",
+        "reschedule_email": "Please enter your registered email address to locate your appointment:",
+        "cancel_email": "Please enter your registered email address to locate your appointment:"
     }
     msg = questions.get(step)
     if msg and (not st.session_state["messages"] or st.session_state["messages"][-1]["content"] != msg):
@@ -151,11 +174,21 @@ def handle_chat():
     if "appointment_details" not in st.session_state: st.session_state["appointment_details"] = {}
     if "audio_key_index" not in st.session_state: st.session_state["audio_key_index"] = 0
 
-    # 0. DATABASE CHECK
-    is_connected, db_error = database.test_connection()
+    # 0. DATABASE STATUS & RESILIENCE
+    is_connected, db_status = database.test_connection()
     if not is_connected:
-        st.error(f"🚨 Connection Error: {db_error}")
-        st.stop()
+        with st.expander("ℹ️ Database Notice: Local Fallback Active", expanded=False):
+            st.warning(f"**Notice:** {db_status}")
+            st.markdown("""
+            **Why is this happening?**
+            - Free-tier Supabase projects pause after 7 days of inactivity.
+            - **To resume cloud synchronization:**
+              1. Log into your [Supabase Dashboard](https://supabase.com/dashboard).
+              2. Select your project and click **'Restore project'** (takes ~1-2 mins).
+              3. Verify `SUPABASE_URL` and `SUPABASE_KEY` in your Streamlit Cloud Secrets.
+            
+            *The assistant is fully functional in Local Fallback mode right now. You can book, check symptoms, and chat normally!*
+            """)
 
     # Create Main Columns (Left for Chat, Right for Dashboard)
     col_chat, col_dash = st.columns([1.8, 1])
@@ -323,13 +356,123 @@ def handle_chat():
             if normalize_input(user_input) in ["1", "yes", "confirm"]:
                 d = st.session_state["appointment_details"]
                 res = database.add_appointment(d["email"], d["name"], d["mobile"], int(d["age"]), d["gender"], d["symptoms"], d["selected_doctor"], d["appointment_date"], d["appointment_time"])
-                id_str = f"APPT-{res.data[0]['id']}" if res.data and res.data[0].get('id') else "OK"
+                id_str = f"APPT-{res.data[0]['id']}" if res and res.data and res.data[0].get('id') else "OK"
                 email_body = f"""Hello {d['name']}, your appointment has been booked. Details: ID {id_str}, Doctor {d['selected_doctor']}, Date {d['appointment_date']}, Time {d['appointment_time']}."""
                 send_email(d["email"], f"Appointment Confirmation - {id_str}", email_body)
                 msg = f"Booked successfully! ID: {id_str}. Confirmation sent to your email."
                 st.session_state["messages"].append({"role": "assistant", "content": msg})
                 st.session_state["to_speak"] = msg
                 st.session_state["step"] = None; st.session_state["appointment_details"] = {}; st.rerun()
+            else:
+                msg = "Appointment booking cancelled. How else can I help you today?"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None; st.session_state["appointment_details"] = {}; st.rerun()
+        elif step == "reschedule_email":
+            email_val = user_input.lower().replace(" ", "").strip()
+            appts = database.get_appointments(email_val)
+            if not appts:
+                msg = f"No appointments found for '{email_val}'. Type '1' to book an appointment or ask another question."
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None
+                st.rerun()
+            else:
+                st.session_state["reschedule_appts"] = appts
+                list_str = "\n".join([f"{i+1}. Dr. {a.get('doctor')} on {a.get('appointment_date')} at {a.get('appointment_time')} (ID: {a.get('id')})" for i, a in enumerate(appts)])
+                msg = f"Found {len(appts)} appointment(s):\n{list_str}\n\nPlease enter the number of the appointment you want to reschedule:"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = "reschedule_pick"
+                st.rerun()
+        elif step == "reschedule_pick":
+            appts = st.session_state.get("reschedule_appts", [])
+            norm = normalize_input(user_input)
+            idx = int(norm) - 1 if norm.isdigit() else -1
+            if 0 <= idx < len(appts):
+                st.session_state["target_reschedule_appt"] = appts[idx]
+                msg = f"Selected appointment with Dr. {appts[idx].get('doctor')}. What is your new preferred date? (e.g. YYYY-MM-DD or 'tomorrow')"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = "reschedule_new_date"
+                st.rerun()
+            else:
+                st.error(f"Please choose a valid number between 1 and {len(appts)}.")
+        elif step == "reschedule_new_date":
+            d = parse_date(user_input)
+            if not d:
+                res = symptom_analyzer.parse_datetime_ai(user_input, f"Today is {datetime.now().strftime('%Y-%m-%d')}")
+                if res and res.get("date"): d = res["date"]
+            if d and not is_past_date(d):
+                st.session_state["new_reschedule_date"] = d
+                msg = "What time would you prefer? (e.g. 11:00 AM)"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = "reschedule_new_time"
+                st.rerun()
+            else:
+                st.error("Please enter a valid future date (e.g., 2026-09-10 or tomorrow).")
+        elif step == "reschedule_new_time":
+            t = parse_time(user_input)
+            if not t:
+                res = symptom_analyzer.parse_datetime_ai(user_input, f"Now is {datetime.now().strftime('%I:%M %p')}")
+                if res and res.get("time"): t = res["time"]
+            if t:
+                target = st.session_state.get("target_reschedule_appt", {})
+                new_d = st.session_state.get("new_reschedule_date")
+                appt_id = target.get("id")
+                database.reschedule_appointment(appt_id, new_d, t)
+                msg = f"✅ Appointment ID {appt_id} has been successfully rescheduled to {new_d} at {t}!"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None
+                st.session_state.pop("target_reschedule_appt", None)
+                st.session_state.pop("reschedule_appts", None)
+                st.rerun()
+            else:
+                st.error("Please enter a valid time (e.g., 10:30 AM).")
+        elif step == "cancel_email":
+            email_val = user_input.lower().replace(" ", "").strip()
+            appts = database.get_appointments(email_val)
+            if not appts:
+                msg = f"No appointments found for '{email_val}'."
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None
+                st.rerun()
+            else:
+                st.session_state["cancel_appts"] = appts
+                list_str = "\n".join([f"{i+1}. Dr. {a.get('doctor')} on {a.get('appointment_date')} at {a.get('appointment_time')} (ID: {a.get('id')})" for i, a in enumerate(appts)])
+                msg = f"Found {len(appts)} appointment(s):\n{list_str}\n\nPlease enter the number of the appointment you wish to cancel:"
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = "cancel_pick"
+                st.rerun()
+        elif step == "cancel_pick":
+            appts = st.session_state.get("cancel_appts", [])
+            norm = normalize_input(user_input)
+            idx = int(norm) - 1 if norm.isdigit() else -1
+            if 0 <= idx < len(appts):
+                target = appts[idx]
+                appt_id = target.get("id")
+                database.cancel_appointment(appt_id)
+                msg = f"🗑️ Appointment ID {appt_id} with Dr. {target.get('doctor')} has been cancelled."
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None
+                st.session_state.pop("cancel_appts", None)
+                st.rerun()
+            else:
+                st.error(f"Please choose a valid number between 1 and {len(appts)}.")
+        elif step == "medical_info":
+            with st.spinner("Consulting AI medical knowledge..."):
+                ana = symptom_analyzer.analyze_symptom(user_input)
+                spec = ana.get("specialty", "Primary Care Doctor")
+                msg = f"For '{user_input}', consulting a **{spec}** is recommended.\n\n*Reasoning:* {ana.get('reasoning', 'General evaluation recommended.')}\n\n*Note: This is AI assistance and not a substitute for professional medical diagnosis.* Type '1' to book an appointment with a specialist."
+                st.session_state["messages"].append({"role": "assistant", "content": msg})
+                st.session_state["to_speak"] = msg
+                st.session_state["step"] = None
+                st.rerun()
 
 def main():
     st.set_page_config(page_title="Medical Assistant", page_icon="🏥", initial_sidebar_state="collapsed", layout="wide")

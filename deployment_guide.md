@@ -55,4 +55,20 @@ Since your app uses `pydub` and `SpeechRecognition`, Streamlit might need `ffmpe
 - [ ] API Secrets are added in Streamlit Cloud Dashboard.
 - [ ] Database (Supabase) is reachable.
 
+---
+
+## 🔧 Troubleshooting Common Issues
+
+### 🚨 `Connection Error: [Errno -2] Name or service not known`
+If you encounter this error on Streamlit Cloud:
+1. **Supabase Inactivity Auto-Pause (Most Common)**:
+   - Supabase automatically pauses Free Tier projects after 7 consecutive days of inactivity.
+   - When paused, Supabase completely removes the project's DNS records, so the server cannot resolve the URL.
+   - **Fix**: Log into the [Supabase Dashboard](https://supabase.com/dashboard), click on your project, and click **"Restore project"**. It will resume in ~1-2 minutes.
+2. **Incorrect URL Format in Secrets**:
+   - Make sure `SUPABASE_URL` in Streamlit Cloud Settings > Secrets starts with `https://` (e.g. `https://your-project.supabase.co`).
+   - Ensure there are no trailing slashes or accidental spaces.
+3. **Local Fallback Mode**:
+   - The app includes an automatic SQLite fallback. Even if Supabase is temporarily paused or unreachable, the chatbot will continue functioning without crashing, allowing appointments to be booked and tested.
+
 **Your app will be live at `https://your-app-name.streamlit.app`!** 🏥🚀

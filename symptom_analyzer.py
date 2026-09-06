@@ -11,12 +11,17 @@ load_dotenv()
 
 def get_secret(key, default=None):
     """Robustly fetch secrets from Streamlit or Environment."""
+    val = None
     try:
-        if key in st.secrets:
-            return st.secrets[key]
+        if hasattr(st, "secrets") and key in st.secrets:
+            val = st.secrets[key]
     except Exception:
         pass
-    return os.environ.get(key, default)
+    if not val:
+        val = os.environ.get(key, default)
+    if val:
+        val = str(val).strip().strip('"\'')
+    return val
 
 # Configure Clients
 gemini_key = get_secret("GEMINI_API_KEY")

@@ -47,3 +47,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+*.db
+*.sqlite3
+
+push_to_github.bat
