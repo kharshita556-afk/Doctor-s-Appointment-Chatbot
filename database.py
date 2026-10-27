@@ -153,6 +153,8 @@ def add_appointment(email, name, mobile, age, gender, symptoms, doctor, date, ti
         except Exception as e:
             print(f"Supabase add_appointment failed: {e}. Falling back to local storage.")
     
+    # 2. Fallback to Local SQLite DB
+    try:
         try:
             safe_age = int(age)
         except (ValueError, TypeError):
